@@ -67,7 +67,7 @@ function refreshDashboardData() {
 
   writeSheet(formKey, cleaned, columnsFor(formKey));
   writeSheet('farmer_master', farmerMaster, FARMER_MASTER_COLUMNS);
-  writeMeta(formKey, cleaned.length, farmerMaster.length);
+  writeMeta(formKey, cleaned.length, raw.length - cleaned.length, farmerMaster.length);
   props.setProperty(NEXT_FORM_PROPERTY, otherKey);
 }
 
@@ -343,7 +343,7 @@ function readSheetAsObjects(sheetName, columns) {
   });
 }
 
-function writeMeta(refreshedFormKey, refreshedRows, farmerMasterRows) {
+function writeMeta(refreshedFormKey, refreshedRows, duplicatesDropped, farmerMasterRows) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('meta') || ss.insertSheet('meta');
   var nowStr = Utilities.formatDate(new Date(), 'Africa/Nairobi', 'yyyy-MM-dd HH:mm:ss');
@@ -352,6 +352,7 @@ function writeMeta(refreshedFormKey, refreshedRows, farmerMasterRows) {
   meta['last_refreshed_eat'] = nowStr;
   meta[refreshedFormKey + '_last_refreshed_eat'] = nowStr;
   meta[refreshedFormKey + '_rows'] = refreshedRows;
+  meta[refreshedFormKey + '_duplicates_dropped'] = duplicatesDropped;
   meta['farmer_master_rows'] = farmerMasterRows;
   meta['source'] = 'SurveyCTO REST API, test_form_one_data_specialist_pmi and test_form_two_data_specialist_pmi';
 
