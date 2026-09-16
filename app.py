@@ -1,4 +1,5 @@
 import os
+from datetime import date, timedelta
 
 import altair as alt
 import pandas as pd
@@ -35,6 +36,100 @@ SYMPTOM_LABELS = {
     "symptom_discoloration": "Discoloration",
     "symptom_spots": "Spots",
     "symptom_none": "None observed",
+}
+
+COUNTRY_LABELS = {"bgd": "Bangladesh", "ind": "India", "ken": "Kenya", "nga": "Nigeria"}
+
+GROWTH_STAGE_LABELS = {
+    "seedling": "Seedling",
+    "vegetative": "Vegetative",
+    "flowering": "Flowering",
+    "grainfill": "Grain fill",
+    "maturity": "Maturity",
+}
+
+LINK_STATUS_LABELS = {
+    "linked": "Linked to both forms",
+    "distribution_only": "Distribution only",
+    "crop_health_only": "Crop health only",
+}
+
+SEED_VARIETY_LABELS = {"a": "Variety a", "b": "Variety b", "c": "Variety c", "other": "Other"}
+
+GROWTH_STAGE_LABEL_ORDER = [GROWTH_STAGE_LABELS[stage] for stage in GROWTH_STAGE_ORDER]
+
+DATE_PRESETS = ["All time", "Last 7 days", "Last 30 days", "Last 90 days", "This month", "Custom range"]
+
+DISTRIBUTION_METRICS = {
+    "Quantity distributed (kg)": ("quantity_kg", "sum", ",.0f"),
+    "Farmers reached": ("unique_farmer_id", "nunique", ",.0f"),
+    "Mean quantity per farmer (kg)": ("quantity_kg", "mean", ",.1f"),
+}
+
+DISTRIBUTION_BREAKDOWNS = {"Region": "region", "Country": "country", "Seed variety": "seed_variety"}
+
+CROP_HEALTH_METRICS = {
+    "Pest or disease rate": ("has_pest_disease", "mean", ".0%"),
+    "Visits recorded": ("unique_farmer_id", "size", ",.0f"),
+    "Farmers visited": ("unique_farmer_id", "nunique", ",.0f"),
+    "Mean plant height (cm)": ("plant_height_cm", "mean", ",.1f"),
+}
+
+CROP_HEALTH_BREAKDOWNS = {"Region": "region", "Growth stage": "growth_stage", "Country": "country"}
+
+WATCHLIST_SORTS = {
+    "Follow up score": "Follow up score",
+    "Pest or disease rate": "Pest or disease rate",
+    "Delivery completion": "Delivery completion",
+    "Linkage rate": "Linkage rate",
+}
+
+VALUE_LABELS = {
+    "country": COUNTRY_LABELS,
+    "growth_stage": GROWTH_STAGE_LABELS,
+    "latest_growth_stage": GROWTH_STAGE_LABELS,
+    "link_status": LINK_STATUS_LABELS,
+    "seed_variety": SEED_VARIETY_LABELS,
+}
+
+COLUMN_LABELS = {
+    "unique_farmer_id": "Farmer ID",
+    "country": "Country",
+    "region": "Region",
+    "submission_date": "Submitted",
+    "seed_variety": "Seed variety",
+    "variety_other": "Other variety named",
+    "is_delivered": "Delivered",
+    "quantity_kg": "Quantity (kg)",
+    "distribution_challenges": "Reported challenges",
+    "growth_stage": "Growth stage",
+    "plant_height_cm": "Plant height (cm)",
+    "height_z_within_stage": "Height against stage average (SD)",
+    "has_pest_disease": "Pest or disease",
+    "additional_observations": "Observations",
+    "link_status": "Link status",
+    "country_mismatch": "Country disagrees",
+    "region_mismatch": "Region disagrees",
+    "geo_mismatch": "Location disagrees",
+    "distribution_submission_date": "Seed distributed on",
+    "n_crop_health_visits": "Crop health visits (n)",
+    "first_crop_health_date": "First visit",
+    "last_crop_health_date": "Latest visit",
+    "latest_growth_stage": "Latest growth stage",
+    "latest_plant_height_cm": "Latest plant height (cm)",
+    "latest_height_z_within_stage": "Latest height against stage average (SD)",
+    "days_between_submissions": "Days from distribution to first visit",
+    "channel_ngo": "NGO channel",
+    "channel_direct": "Direct channel",
+    "channel_govt": "Government channel",
+    "channel_coop": "Cooperative channel",
+    "channel_agrovet": "Agrovet channel",
+    "symptom_yellow": "Yellowing",
+    "symptom_stunted": "Stunted growth",
+    "symptom_wilting": "Wilting",
+    "symptom_none": "None observed",
+    "symptom_discoloration": "Discoloration",
+    "symptom_spots": "Spots",
 }
 
 BOOLEAN_COLUMNS = {
@@ -133,6 +228,69 @@ def rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else float("nan")
 
 
+def label_of(column: str) -> str:
+    return COLUMN_LABELS.get(column, column.replace("_", " ").capitalize())
+
+
+def labelled(series: pd.Series, column: str) -> pd.Series:
+    mapping = VALUE_LABELS.get(column)
+    return series if mapping is None else series.map(lambda value: mapping.get(value, value))
+
+
+def display_frame(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    for column in df.columns:
+        series = df[column]
+        if series.dtype == "boolean":
+            series = series.map({True: "Yes", False: "No"})
+        elif pd.api.types.is_datetime64_any_dtype(series):
+            series = series.dt.strftime("%Y-%m-%d")
+        else:
+            series = labelled(series, column)
+        out[label_of(column)] = series
+    return out
+
+
+def aggregate(df: pd.DataFrame, dimension: str, column: str, how: str) -> pd.DataFrame:
+    grouped = df.groupby(dimension, dropna=True)
+    values = grouped.size() if how == "size" else grouped[column].agg(how)
+    summary = pd.DataFrame({
+        "category": values.index.astype(str),
+        "value": values.to_numpy(dtype="float64"),
+        "n": grouped["unique_farmer_id"].size().to_numpy(),
+        "farmers": grouped["unique_farmer_id"].nunique().to_numpy(),
+    })
+    summary["category"] = labelled(summary["category"], dimension)
+    return summary
+
+
+def metric_chart(summary: pd.DataFrame, dimension_label: str, metric_label: str, fmt: str,
+                 sort: list | str | None = None) -> alt.Chart:
+    is_rate = fmt.endswith("%")
+    return alt.Chart(summary, height=300).mark_bar(
+        color=PALETTE["primary"], cornerRadiusEnd=4, size=22
+    ).encode(
+        x=alt.X("category:N", title=dimension_label,
+                sort=sort if sort is not None else alt.EncodingSortField(field="value", order="descending"),
+                axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("value:Q", title=metric_label, scale=alt.Scale(zero=True),
+                axis=alt.Axis(format="%") if is_rate else alt.Axis()),
+        tooltip=[
+            tip("category:N", dimension_label),
+            tip("value:Q", metric_label, fmt=fmt),
+            tip("n:Q", "Records (n)", fmt=",.0f"),
+            tip("farmers:Q", "Farmers (n)", fmt=",.0f"),
+        ],
+    )
+
+
+def tip(field: str, title: str | None = None, fmt: str | None = None) -> alt.Tooltip:
+    label = title or label_of(field.split(":")[0])
+    if fmt is None:
+        return alt.Tooltip(field, title=label)
+    return alt.Tooltip(field, title=label, format=fmt)
+
+
 def style(chart: alt.Chart) -> alt.Chart:
     return chart.configure_view(strokeWidth=0).configure_axis(
         labelColor=PALETTE["muted"],
@@ -151,7 +309,7 @@ def bar(df: pd.DataFrame, x: str, y: str, x_title: str, y_title: str, sort=None,
     return alt.Chart(df, height=height).mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=22).encode(
         x=alt.X(x, title=x_title, sort=sort, axis=alt.Axis(labelAngle=0)),
         y=alt.Y(y, title=y_title, scale=alt.Scale(zero=True)),
-        tooltip=list(df.columns),
+        tooltip=[tip(x, x_title), tip(y, y_title, fmt=",.0f")],
     )
 
 
@@ -163,25 +321,64 @@ def sidebar_filters(farmer_master: pd.DataFrame, crop_health: pd.DataFrame) -> d
     statuses = sorted(farmer_master["link_status"].dropna().unique())
     stages = [stage for stage in GROWTH_STAGE_ORDER if stage in set(crop_health["growth_stage"])]
 
-    selected = {
-        "country": st.sidebar.multiselect("Country", countries, default=countries),
-        "region": st.sidebar.multiselect("Region", regions, default=regions),
-        "seed_variety": st.sidebar.multiselect("Seed variety", varieties, default=varieties),
-        "link_status": st.sidebar.multiselect("Link status", statuses, default=statuses),
-        "growth_stage": st.sidebar.multiselect("Growth stage", stages, default=stages),
-        "delivery": st.sidebar.selectbox("Delivery status", ["All", "Delivered", "Not delivered"]),
-        "channel": st.sidebar.selectbox("Distribution channel", ["All", *CHANNEL_LABELS.values()]),
-    }
-
     dates = pd.concat([
         farmer_master["distribution_submission_date"], crop_health["submission_date"],
     ]).dropna()
-    if not dates.empty:
-        first, last = dates.min().date(), dates.max().date()
-        selected["date_range"] = st.sidebar.date_input("Submission date range", value=(first, last))
-    else:
+    selected = {}
+    if dates.empty:
         selected["date_range"] = ()
+    else:
+        first, last = dates.min().date(), dates.max().date()
+        preset = st.sidebar.selectbox("Submission date range", DATE_PRESETS)
+        if preset == "Custom range":
+            chosen = st.sidebar.date_input("Custom range", value=(first, last))
+            selected["date_range"] = tuple(chosen) if len(chosen) == 2 else (first, last)
+        else:
+            selected["date_range"] = preset_range(preset, first, last)
+        start, end = selected["date_range"]
+        st.sidebar.caption(f"Showing {start} to {end}. Data covers {first} to {last}.")
+
+    selected.update({
+        "country": st.sidebar.multiselect(
+            "Country", countries, default=countries,
+            format_func=lambda value: COUNTRY_LABELS.get(value, value),
+        ),
+        "region": st.sidebar.multiselect("Region", regions, default=regions),
+        "seed_variety": st.sidebar.multiselect(
+            "Seed variety", varieties, default=varieties,
+            format_func=lambda value: SEED_VARIETY_LABELS.get(value, value),
+        ),
+        "link_status": st.sidebar.multiselect(
+            "Link status", statuses, default=statuses,
+            format_func=lambda value: LINK_STATUS_LABELS.get(value, value),
+        ),
+        "growth_stage": st.sidebar.multiselect(
+            "Growth stage", stages, default=stages,
+            format_func=lambda value: GROWTH_STAGE_LABELS.get(value, value),
+        ),
+        "delivery": st.sidebar.selectbox("Delivery status", ["All", "Delivered", "Not delivered"]),
+        "channel": st.sidebar.selectbox("Distribution channel", ["All", *CHANNEL_LABELS.values()]),
+    })
+
+    with st.sidebar.expander("Programme overview", expanded=False):
+        selected["distribution_metric"] = st.selectbox("Measure", list(DISTRIBUTION_METRICS), key="dist_metric")
+        selected["distribution_breakdown"] = st.selectbox("Break down by", list(DISTRIBUTION_BREAKDOWNS), key="dist_dim")
+    with st.sidebar.expander("Crop health", expanded=False):
+        selected["crop_metric"] = st.selectbox("Measure", list(CROP_HEALTH_METRICS), key="crop_metric")
+        selected["crop_breakdown"] = st.selectbox("Break down by", list(CROP_HEALTH_BREAKDOWNS), key="crop_dim")
+    with st.sidebar.expander("Integrated view", expanded=False):
+        selected["watchlist_sort"] = st.selectbox("Rank watchlist by", list(WATCHLIST_SORTS), key="watch_sort")
     return selected
+
+
+def preset_range(preset: str, first: date, last: date) -> tuple:
+    today = date.today()
+    if preset == "All time":
+        return first, last
+    if preset == "This month":
+        return today.replace(day=1), today
+    days = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90}[preset]
+    return today - timedelta(days=days), today
 
 
 def apply_filters(frames: dict, filters: dict) -> dict:
@@ -216,7 +413,7 @@ def apply_filters(frames: dict, filters: dict) -> dict:
     return {"farmer_master": kept, "crop_health": crop_health, "distribution": distribution}
 
 
-def render_overview(frames: dict, meta: dict) -> None:
+def render_overview(frames: dict, meta: dict, filters: dict) -> None:
     farmer_master, crop_health, distribution = frames["farmer_master"], frames["crop_health"], frames["distribution"]
     st.subheader("Programme overview")
 
@@ -259,15 +456,19 @@ listed on the data quality page. This is a small sample of dummy data, so differ
     right.metric("Pest or disease rate", f"{pest_rate:.0%}")
     right.caption(f"n={len(with_visits)} farmers with at least one crop health visit")
 
-    st.markdown("##### Distribution volume by region")
-    st.caption("Total kilograms distributed, all submissions to date")
-    by_region = distribution.groupby("region", as_index=False)["quantity_kg"].sum()
-    if not by_region.empty:
-        st.altair_chart(
-            style(bar(by_region, "region:N", "quantity_kg:Q", "Region", "Quantity (kg)",
-                      sort=alt.EncodingSortField(field="quantity_kg", order="descending"))),
-            use_container_width=True,
-        )
+    metric_label = filters["distribution_metric"]
+    breakdown_label = filters["distribution_breakdown"]
+    column, how, fmt = DISTRIBUTION_METRICS[metric_label]
+    dimension = DISTRIBUTION_BREAKDOWNS[breakdown_label]
+
+    st.markdown(f"##### {metric_label} by {breakdown_label.lower()}")
+    st.caption(
+        "All submissions in the selected date range. Change the measure or the breakdown in the sidebar, "
+        "under programme overview. Hover a bar for the number of records and farmers behind it."
+    )
+    if not distribution.empty:
+        summary = aggregate(distribution, dimension, column, how)
+        st.altair_chart(style(metric_chart(summary, breakdown_label, metric_label, fmt)), use_container_width=True)
 
     st.markdown("##### Delivery status by region")
     st.caption("Farmers with a distribution record, all submissions to date")
@@ -282,7 +483,8 @@ listed on the data quality page. This is a small sample of dummy data, so differ
                 y=alt.Y("unique_farmer_id:Q", title="Farmers", scale=alt.Scale(zero=True)),
                 color=alt.Color("delivery_status:N", title="Delivery status", scale=alt.Scale(
                     domain=["Delivered", "Not delivered"], range=[PALETTE["good"], PALETTE["risk"]])),
-                tooltip=["region", "delivery_status", "unique_farmer_id"],
+                tooltip=[tip("region:N", "Region"), tip("delivery_status:N", "Delivery status"),
+                         tip("unique_farmer_id:Q", "Farmers", fmt=",.0f")],
             )),
             use_container_width=True,
         )
@@ -302,7 +504,8 @@ listed on the data quality page. This is a small sample of dummy data, so differ
                 color=alt.Color("form:N", title="Form", scale=alt.Scale(
                     domain=["Seed distribution", "Crop health"], range=[PALETTE["primary"], PALETTE["muted"]])),
                 strokeDash=alt.StrokeDash("form:N", title="Form"),
-                tooltip=["form", "day", "submissions"],
+                tooltip=[tip("form:N", "Form"), tip("day:T", "Submission date"),
+                         tip("submissions:Q", "Submissions", fmt=",.0f")],
             )),
             use_container_width=True,
         )
@@ -324,6 +527,7 @@ def render_distribution(frames: dict) -> None:
     st.markdown("##### Quantity by seed variety")
     st.caption("Total kilograms distributed, all submissions to date")
     by_variety = distribution.groupby("seed_variety", as_index=False)["quantity_kg"].sum()
+    by_variety["seed_variety"] = labelled(by_variety["seed_variety"], "seed_variety")
     st.altair_chart(
         style(bar(by_variety, "seed_variety:N", "quantity_kg:Q", "Seed variety", "Quantity (kg)")),
         use_container_width=True,
@@ -383,7 +587,7 @@ def render_distribution(frames: dict) -> None:
             ).encode(
                 x=alt.X("submissions:Q", title="Submissions", scale=alt.Scale(zero=True)),
                 y=alt.Y("challenge:N", title="Challenge", sort="-x"),
-                tooltip=["challenge", "submissions"],
+                tooltip=[tip("challenge:N", "Challenge"), tip("submissions:Q", "Submissions", fmt=",.0f")],
             )),
             use_container_width=True,
         )
@@ -397,26 +601,27 @@ def render_distribution(frames: dict) -> None:
     render_farmer_table(distribution, "distribution")
 
 
-def render_crop_health(frames: dict) -> None:
+def render_crop_health(frames: dict, filters: dict) -> None:
     crop_health = frames["crop_health"]
     st.subheader("Crop health")
     if crop_health.empty:
         st.info("No crop health visits match the current filters.")
         return
 
-    st.markdown("##### Pest or disease incidence by region")
-    st.caption("Share of crop health visits recording pest or disease, with n visits per region")
-    by_region = crop_health.groupby("region").agg(
-        visits=("unique_farmer_id", "size"),
-        with_pest=("has_pest_disease", lambda values: int((values == True).sum())),
-    ).reset_index()
-    by_region["incidence"] = by_region["with_pest"] / by_region["visits"]
+    metric_label = filters["crop_metric"]
+    breakdown_label = filters["crop_breakdown"]
+    column, how, fmt = CROP_HEALTH_METRICS[metric_label]
+    dimension = CROP_HEALTH_BREAKDOWNS[breakdown_label]
+
+    st.markdown(f"##### {metric_label} by {breakdown_label.lower()}")
+    st.caption(
+        "Change the measure or the breakdown in the sidebar, under crop health. Hover a bar for the number of "
+        "visits and farmers behind it. Plant height is only comparable within a growth stage."
+    )
+    summary = aggregate(crop_health, dimension, column, how)
+    sort = GROWTH_STAGE_LABEL_ORDER if dimension == "growth_stage" else None
     st.altair_chart(
-        style(alt.Chart(by_region, height=280).mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=22).encode(
-            x=alt.X("region:N", title="Region", sort="-y", axis=alt.Axis(labelAngle=0)),
-            y=alt.Y("incidence:Q", title="Incidence rate", axis=alt.Axis(format="%"), scale=alt.Scale(zero=True)),
-            tooltip=["region", alt.Tooltip("incidence:Q", format=".0%"), "visits", "with_pest"],
-        )),
+        style(metric_chart(summary, breakdown_label, metric_label, fmt, sort=sort)),
         use_container_width=True,
     )
 
@@ -427,11 +632,13 @@ def render_crop_health(frames: dict) -> None:
         with_pest=("has_pest_disease", lambda values: int((values == True).sum())),
     ).reset_index()
     by_stage["incidence"] = by_stage["with_pest"] / by_stage["visits"]
+    by_stage["growth_stage"] = labelled(by_stage["growth_stage"], "growth_stage")
     st.altair_chart(
         style(alt.Chart(by_stage, height=280).mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=22).encode(
-            x=alt.X("growth_stage:N", title="Growth stage", sort=GROWTH_STAGE_ORDER, axis=alt.Axis(labelAngle=0)),
+            x=alt.X("growth_stage:N", title="Growth stage", sort=GROWTH_STAGE_LABEL_ORDER, axis=alt.Axis(labelAngle=0)),
             y=alt.Y("incidence:Q", title="Incidence rate", axis=alt.Axis(format="%"), scale=alt.Scale(zero=True)),
-            tooltip=["growth_stage", alt.Tooltip("incidence:Q", format=".0%"), "visits", "with_pest"],
+            tooltip=[tip("growth_stage:N", "Growth stage"), tip("incidence:Q", "Incidence rate", fmt=".0%"),
+                     tip("visits:Q", "Visits (n)", fmt=",.0f"), tip("with_pest:Q", "Visits with pest or disease", fmt=",.0f")],
         )),
         use_container_width=True,
     )
@@ -450,7 +657,7 @@ def render_crop_health(frames: dict) -> None:
             ).encode(
                 x=alt.X("visits:Q", title="Visits", scale=alt.Scale(zero=True)),
                 y=alt.Y("symptom:N", title="Symptom", sort="-x"),
-                tooltip=["symptom", "visits"],
+                tooltip=[tip("symptom:N", "Symptom"), tip("visits:Q", "Visits", fmt=",.0f")],
             )),
             use_container_width=True,
         )
@@ -460,17 +667,20 @@ def render_crop_health(frames: dict) -> None:
         "Height is compared only within growth stage, never pooled across stages. The box shows the spread of "
         "observed heights, the table gives the mean with its n."
     )
+    heights = crop_health.assign(stage=labelled(crop_health["growth_stage"], "growth_stage"))
     st.altair_chart(
-        style(alt.Chart(crop_health, height=300).mark_boxplot(color=PALETTE["primary"], size=30).encode(
-            x=alt.X("growth_stage:N", title="Growth stage", sort=GROWTH_STAGE_ORDER, axis=alt.Axis(labelAngle=0)),
+        style(alt.Chart(heights, height=300).mark_boxplot(color=PALETTE["primary"], size=30).encode(
+            x=alt.X("stage:N", title="Growth stage", sort=GROWTH_STAGE_LABEL_ORDER, axis=alt.Axis(labelAngle=0)),
             y=alt.Y("plant_height_cm:Q", title="Plant height (cm)", scale=alt.Scale(zero=True)),
         )),
         use_container_width=True,
     )
     summary = crop_health.groupby("growth_stage")["plant_height_cm"].agg(["count", "mean", "std"]).reset_index()
     summary["growth_stage"] = pd.Categorical(summary["growth_stage"], GROWTH_STAGE_ORDER, ordered=True)
+    summary = summary.sort_values("growth_stage")
+    summary["growth_stage"] = labelled(summary["growth_stage"].astype(str), "growth_stage")
     st.dataframe(
-        summary.sort_values("growth_stage").rename(columns={
+        summary.rename(columns={
             "growth_stage": "Growth stage", "count": "Visits (n)",
             "mean": "Mean height (cm)", "std": "Standard deviation (cm)",
         }).style.format({"Mean height (cm)": "{:.1f}", "Standard deviation (cm)": "{:.1f}"}),
@@ -480,7 +690,7 @@ def render_crop_health(frames: dict) -> None:
     render_farmer_table(crop_health, "crop_health")
 
 
-def render_integrated(frames: dict) -> None:
+def render_integrated(frames: dict, filters: dict) -> None:
     farmer_master, crop_health = frames["farmer_master"], frames["crop_health"]
     st.subheader("Integrated view")
     if crop_health.empty or farmer_master.empty:
@@ -497,36 +707,44 @@ def render_integrated(frames: dict) -> None:
         "Compared only within growth stage. Bars show the mean, the line through each bar is the 95 percent "
         "confidence interval, and n is the number of visits behind each bar."
     )
-    by_variety_stage = joined.dropna(subset=["seed_variety"])
+    by_variety_stage = joined.dropna(subset=["seed_variety"]).assign(
+        variety=lambda df: labelled(df["seed_variety"], "seed_variety"),
+        stage=lambda df: labelled(df["growth_stage"], "growth_stage"),
+    )
     if by_variety_stage.empty:
         st.info("No visits with a linked seed variety in the current selection.")
     else:
         base = alt.Chart(by_variety_stage)
         bars = base.mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=22).encode(
-            x=alt.X("seed_variety:N", title="Seed variety", axis=alt.Axis(labelAngle=0)),
+            x=alt.X("variety:N", title="Seed variety", axis=alt.Axis(labelAngle=0)),
             y=alt.Y("mean(plant_height_cm):Q", title="Mean plant height (cm)", scale=alt.Scale(zero=True)),
+            tooltip=[tip("variety:N", "Seed variety"),
+                     alt.Tooltip("mean(plant_height_cm):Q", title="Mean plant height (cm)", format=".1f"),
+                     alt.Tooltip("count():Q", title="Visits (n)", format="d")],
         )
         intervals = base.mark_errorbar(extent="ci", color=PALETTE["ink"]).encode(
-            x=alt.X("seed_variety:N"), y=alt.Y("plant_height_cm:Q", title="Mean plant height (cm)"),
+            x=alt.X("variety:N"), y=alt.Y("plant_height_cm:Q", title="Mean plant height (cm)"),
         )
         labels = base.mark_text(dy=-6, color=PALETTE["muted"], fontSize=11).encode(
-            x=alt.X("seed_variety:N"),
+            x=alt.X("variety:N"),
             y=alt.Y("mean(plant_height_cm):Q"),
             text=alt.Text("count():Q", format="d"),
         )
         st.altair_chart(
             style((bars + intervals + labels).properties(height=240).facet(
-                column=alt.Column("growth_stage:N", title="Growth stage", sort=GROWTH_STAGE_ORDER),
+                column=alt.Column("stage:N", title="Growth stage", sort=GROWTH_STAGE_LABEL_ORDER),
             )),
             use_container_width=False,
         )
-        counts = by_variety_stage.groupby(["growth_stage", "seed_variety"])["plant_height_cm"].agg(
+        counts = by_variety_stage.groupby(["growth_stage", "variety"])["plant_height_cm"].agg(
             ["count", "mean", "std"]
         ).reset_index()
         counts["growth_stage"] = pd.Categorical(counts["growth_stage"], GROWTH_STAGE_ORDER, ordered=True)
+        counts = counts.sort_values(["growth_stage", "variety"])
+        counts["growth_stage"] = labelled(counts["growth_stage"].astype(str), "growth_stage")
         st.dataframe(
-            counts.sort_values(["growth_stage", "seed_variety"]).rename(columns={
-                "growth_stage": "Growth stage", "seed_variety": "Seed variety", "count": "Visits (n)",
+            counts.rename(columns={
+                "growth_stage": "Growth stage", "variety": "Seed variety", "count": "Visits (n)",
                 "mean": "Mean height (cm)", "std": "Standard deviation (cm)",
             }).style.format({"Mean height (cm)": "{:.1f}", "Standard deviation (cm)": "{:.1f}"}),
             use_container_width=True, hide_index=True,
@@ -540,6 +758,7 @@ def render_integrated(frames: dict) -> None:
         with_pest=("has_pest_disease", lambda values: int((values == True).sum())),
     ).reset_index()
     by_variety["rate"] = by_variety["with_pest"] / by_variety["farmers"]
+    by_variety["seed_variety"] = labelled(by_variety["seed_variety"], "seed_variety")
 
     channel_rows = melt_flags(visited, CHANNEL_LABELS, "channel").merge(
         visited[["unique_farmer_id", "has_pest_disease"]], on="unique_farmer_id"
@@ -578,26 +797,33 @@ def render_integrated(frames: dict) -> None:
     if scatter_data.empty:
         st.info("No visits with both quantity and height in the current selection.")
     else:
+        scatter_data = scatter_data.assign(stage=labelled(scatter_data["growth_stage"], "growth_stage"))
         st.altair_chart(
             style(alt.Chart(scatter_data).mark_circle(size=70, color=PALETTE["primary"], opacity=0.75).encode(
                 x=alt.X("quantity_kg:Q", title="Quantity distributed (kg)", scale=alt.Scale(zero=True)),
                 y=alt.Y("plant_height_cm:Q", title="Plant height (cm)", scale=alt.Scale(zero=True)),
-                tooltip=["unique_farmer_id", "growth_stage", "quantity_kg", "plant_height_cm"],
+                tooltip=[tip("unique_farmer_id:N", "Farmer ID"), tip("stage:N", "Growth stage"),
+                         tip("quantity_kg:Q", "Quantity (kg)", fmt=",.0f"),
+                         tip("plant_height_cm:Q", "Plant height (cm)", fmt=".1f")],
             ).properties(width=200, height=200).facet(
-                column=alt.Column("growth_stage:N", title="Growth stage", sort=GROWTH_STAGE_ORDER),
+                column=alt.Column("stage:N", title="Growth stage", sort=GROWTH_STAGE_LABEL_ORDER),
             )),
             use_container_width=False,
         )
 
     st.markdown("##### Regional watchlist")
     st.caption(
-        "Regions ranked for follow up. The score is the mean of the three component rates shown beside it, so the "
-        "underlying numbers stay visible rather than hidden inside the score."
+        "Regions ranked for follow up, ordered by the measure chosen in the sidebar under integrated view. The "
+        "score is the mean of the three component rates shown beside it, so the underlying numbers stay visible "
+        "rather than hidden inside the score."
     )
-    st.dataframe(build_watchlist(farmer_master), use_container_width=True, hide_index=True)
+    st.dataframe(
+        build_watchlist(farmer_master, WATCHLIST_SORTS[filters["watchlist_sort"]]),
+        use_container_width=True, hide_index=True,
+    )
 
 
-def build_watchlist(farmer_master: pd.DataFrame) -> pd.DataFrame:
+def build_watchlist(farmer_master: pd.DataFrame, sort_column: str) -> pd.DataFrame:
     grouped = farmer_master.groupby("region")
     watchlist = grouped.agg(
         farmers=("unique_farmer_id", "nunique"),
@@ -617,13 +843,14 @@ def build_watchlist(farmer_master: pd.DataFrame) -> pd.DataFrame:
         + watchlist["pest_rate"].fillna(0)
     ) / 3
 
-    return watchlist.sort_values("follow_up_score", ascending=False).rename(columns={
+    ascending = sort_column in {"Delivery completion", "Linkage rate"}
+    return watchlist.rename(columns={
         "region": "Region", "farmers": "Farmers (n)", "delivery_rate": "Delivery completion",
         "pest_rate": "Pest or disease rate", "linkage_rate": "Linkage rate",
         "follow_up_score": "Follow up score",
     })[[
         "Region", "Farmers (n)", "Delivery completion", "Pest or disease rate", "Linkage rate", "Follow up score",
-    ]].style.format({
+    ]].sort_values(sort_column, ascending=ascending, na_position="last").style.format({
         "Delivery completion": "{:.0%}", "Pest or disease rate": "{:.0%}",
         "Linkage rate": "{:.0%}", "Follow up score": "{:.2f}",
     })
@@ -636,11 +863,7 @@ def render_data_quality(frames: dict, meta: dict) -> None:
     st.markdown("##### Linkage across the two forms")
     st.caption("Farmer records by link status, all submissions to date")
     linkage = farmer_master.groupby("link_status", as_index=False)["unique_farmer_id"].nunique()
-    linkage["link_status"] = linkage["link_status"].map({
-        "linked": "Linked to both forms",
-        "distribution_only": "Distribution only",
-        "crop_health_only": "Crop health only",
-    })
+    linkage["link_status"] = labelled(linkage["link_status"], "link_status")
     if not linkage.empty:
         st.altair_chart(
             style(alt.Chart(linkage, height=220).mark_bar(
@@ -648,7 +871,8 @@ def render_data_quality(frames: dict, meta: dict) -> None:
             ).encode(
                 x=alt.X("unique_farmer_id:Q", title="Farmer records", scale=alt.Scale(zero=True)),
                 y=alt.Y("link_status:N", title="Link status", sort="-x"),
-                tooltip=["link_status", "unique_farmer_id"],
+                tooltip=[tip("link_status:N", "Link status"),
+                         tip("unique_farmer_id:Q", "Farmer records", fmt=",.0f")],
             )),
             use_container_width=True,
         )
@@ -674,14 +898,7 @@ def render_data_quality(frames: dict, meta: dict) -> None:
     if mismatches.empty:
         st.info("No geographic disagreement in the current selection.")
     else:
-        st.dataframe(
-            mismatches.rename(columns={
-                "unique_farmer_id": "Farmer ID", "country": "Country", "region": "Region",
-                "country_mismatch": "Country disagrees", "region_mismatch": "Region disagrees",
-                "link_status": "Link status",
-            }),
-            use_container_width=True, hide_index=True,
-        )
+        st.dataframe(display_frame(mismatches), use_container_width=True, hide_index=True)
 
     st.markdown("##### Missing value rate by field")
     st.caption("Share of rows with no value recorded, by field, all submissions to date")
@@ -716,7 +933,7 @@ def missing_value_rates(frames: dict) -> pd.DataFrame:
         for column in frame.columns:
             rows.append({
                 "Form": label,
-                "Field": column,
+                "Field": label_of(column),
                 "Rows (n)": len(frame),
                 "Missing rate": frame[column].isna().mean() if len(frame) else float("nan"),
             })
@@ -734,7 +951,7 @@ def render_farmer_table(frame: pd.DataFrame, key: str) -> None:
         haystack = table["unique_farmer_id"].astype(str).str.lower() + " " + table["region"].astype(str).str.lower()
         table = table[haystack.str.contains(query, regex=False)]
     st.caption(f"{len(table)} of {len(frame)} rows shown")
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(display_frame(table), use_container_width=True, hide_index=True)
 
 
 def main() -> None:
@@ -755,13 +972,13 @@ def main() -> None:
         "Programme overview", "Seed distribution", "Crop health", "Integrated view", "Data quality",
     ])
     with overview:
-        render_overview(filtered, meta)
+        render_overview(filtered, meta, filters)
     with distribution:
         render_distribution(filtered)
     with crop_health:
-        render_crop_health(filtered)
+        render_crop_health(filtered, filters)
     with integrated:
-        render_integrated(filtered)
+        render_integrated(filtered, filters)
     with quality:
         render_data_quality(filtered, meta)
 
