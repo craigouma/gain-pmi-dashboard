@@ -58,6 +58,8 @@ SEED_VARIETY_LABELS = {"a": "Variety a", "b": "Variety b", "c": "Variety c", "ot
 
 SEED_VARIETY_SHORT = {"a": "A", "b": "B", "c": "C", "other": "Other"}
 
+MIN_FARMERS_TO_RANK = 5
+
 GROWTH_STAGE_LABEL_ORDER = [GROWTH_STAGE_LABELS[stage] for stage in GROWTH_STAGE_ORDER]
 
 DATE_PRESETS = ["All time", "Last 7 days", "Last 30 days", "Last 90 days", "This month", "Custom range"]
@@ -415,6 +417,78 @@ def apply_filters(frames: dict, filters: dict) -> dict:
     return {"farmer_master": kept, "crop_health": crop_health, "distribution": distribution}
 
 
+def follow_up_sentence(farmer_master: pd.DataFrame) -> str:
+    regions = region_summary(farmer_master, "region")
+    rankable = regions[regions["farmers"] >= MIN_FARMERS_TO_RANK]
+    if not rankable.empty:
+        worst = rankable.sort_values("follow_up_score", ascending=False).iloc[0]
+        return (
+            f"{worst['region']} is the region to look at first, with a pest or disease rate of "
+            f"{worst['pest_rate']:.0%}, delivery completion of {worst['delivery_rate']:.0%} and a linkage rate of "
+            f"{worst['linkage_rate']:.0%} (n={int(worst['farmers'])} farmers). The full ranking, with every "
+            "component number visible, is on the integrated view page."
+        )
+
+    largest = int(regions["farmers"].max()) if not regions.empty else 0
+    countries = region_summary(farmer_master, "country")
+    if countries.empty:
+        return (
+            f"No region has enough farmers to rank, the largest holds {largest}. Treat the regional watchlist "
+            "as a list of places to check rather than a ranking."
+        )
+    worst = countries.sort_values("follow_up_score", ascending=False).iloc[0]
+    name = COUNTRY_LABELS.get(worst["country"], worst["country"])
+    return (
+        f"No single region has enough farmers to rank, the largest holds {largest}, below the {MIN_FARMERS_TO_RANK} "
+        f"needed for a rate to mean much, so this points at country level instead. {name} is the one to look at "
+        f"first, with a pest or disease rate of {worst['pest_rate']:.0%}, delivery completion of "
+        f"{worst['delivery_rate']:.0%} and a linkage rate of {worst['linkage_rate']:.0%} "
+        f"(n={int(worst['farmers'])} farmers). The regional breakdown is on the integrated view page, with the "
+        "farmer counts beside every rate."
+    )
+
+
+def overview_findings(farmer_master: pd.DataFrame, crop_health: pd.DataFrame,
+                      distribution: pd.DataFrame) -> str:
+    reached = farmer_master[farmer_master["link_status"] != "crop_health_only"]
+    linked = farmer_master[farmer_master["link_status"] == "linked"]
+    visited = farmer_master[farmer_master["n_crop_health_visits"] > 0]
+    pest_farmers = visited[visited["has_pest_disease"] == True]
+    orphans = farmer_master[farmer_master["link_status"] == "crop_health_only"]
+
+    sentences = [
+        f"Seed reached {len(reached)} farmers carrying {distribution['quantity_kg'].sum():,.0f} kg in total "
+        f"across all submissions to date, and {len(linked)} of those farmers "
+        f"({rate(len(linked), len(farmer_master)):.0%}, n={len(farmer_master)} farmer records) also have a crop "
+        "health visit recorded, so the two forms can be read together for them.",
+        f"Pest or disease is recorded for {len(pest_farmers)} of the {len(visited)} farmers visited "
+        f"({rate(len(pest_farmers), len(visited)):.0%}, n={len(visited)} farmers), across "
+        f"{len(crop_health)} visits.",
+    ]
+
+    sentences.append(follow_up_sentence(farmer_master))
+
+    quality_notes = []
+    if len(orphans):
+        quality_notes.append(
+            f"{len(orphans)} farmers appear in the crop health form with no distribution record"
+        )
+    mismatches = int(farmer_master["geo_mismatch"].sum())
+    if mismatches:
+        quality_notes.append(f"{mismatches} farmers have a country or region that disagrees between the forms")
+    if quality_notes:
+        sentences.append(
+            "Two things to chase on the data itself: " + ", and ".join(quality_notes)
+            + ". Both are listed farmer by farmer on the data quality page."
+        )
+
+    sentences.append(
+        "This is a small sample of dummy data with no baseline and no control group, so treat every difference "
+        "between groups as somewhere to look rather than as an effect."
+    )
+    return "\n\n".join(sentences)
+
+
 def render_overview(frames: dict, meta: dict, filters: dict) -> None:
     farmer_master, crop_health, distribution = frames["farmer_master"], frames["crop_health"], frames["distribution"]
     st.subheader("Programme overview")
@@ -429,18 +503,7 @@ def render_overview(frames: dict, meta: dict, filters: dict) -> None:
     delivery_rate = rate(len(delivered), len(reached))
     pest_rate = rate(len(pest_farmers), len(with_visits))
 
-    st.markdown(
-        f"""
-Across all submissions received to date, {len(linked)} of {len(farmer_master)} farmer records are linked
-across both forms, a linkage rate of {linkage_rate:.0%} (n={len(farmer_master)} farmers).
-Seed reached {len(reached)} farmers carrying {distribution['quantity_kg'].sum():,.0f} kg in total,
-and delivery is marked complete for {delivery_rate:.0%} of them (n={len(reached)} farmers).
-Crop health monitoring has captured {len(crop_health)} visits across {crop_health['unique_farmer_id'].nunique()}
-farmers, and pest or disease is present for {pest_rate:.0%} of the farmers visited (n={len(with_visits)} farmers).
-Geographic disagreement between the two forms affects {int(farmer_master['geo_mismatch'].sum())} farmers and is
-listed on the data quality page. This is a small sample of dummy data, so differences between groups may be noise.
-"""
-    )
+    st.markdown(overview_findings(farmer_master, crop_health, distribution))
 
     left, middle, right = st.columns(3)
     left.metric("Farmers reached", f"{len(reached):,}")
@@ -817,9 +880,11 @@ def render_integrated(frames: dict, filters: dict) -> None:
 
     st.markdown("##### Regional watchlist")
     st.caption(
-        "Regions ranked for follow up, ordered by the measure chosen in the sidebar under integrated view. The "
-        "score is the mean of the three component rates shown beside it, so the underlying numbers stay visible "
-        "rather than hidden inside the score."
+        f"Regions ranked for follow up, ordered by the measure chosen in the sidebar under integrated view. The "
+        f"score is the mean of the three component rates shown beside it, so the underlying numbers stay visible "
+        f"rather than hidden inside the score. A region needs {MIN_FARMERS_TO_RANK} farmers before a rate means "
+        f"much, so regions below that are marked and listed last rather than heading the table on one or two "
+        f"farmers."
     )
     st.dataframe(
         build_watchlist(farmer_master, WATCHLIST_SORTS[filters["watchlist_sort"]]),
@@ -827,8 +892,8 @@ def render_integrated(frames: dict, filters: dict) -> None:
     )
 
 
-def build_watchlist(farmer_master: pd.DataFrame, sort_column: str) -> pd.DataFrame:
-    grouped = farmer_master.groupby("region")
+def region_summary(farmer_master: pd.DataFrame, dimension: str = "region") -> pd.DataFrame:
+    grouped = farmer_master.groupby(dimension)
     watchlist = grouped.agg(
         farmers=("unique_farmer_id", "nunique"),
         linked=("link_status", lambda values: int((values == "linked").sum())),
@@ -846,15 +911,29 @@ def build_watchlist(farmer_master: pd.DataFrame, sort_column: str) -> pd.DataFra
         + (1 - watchlist["delivery_rate"].fillna(0))
         + watchlist["pest_rate"].fillna(0)
     ) / 3
+    return watchlist
 
+
+def build_watchlist(farmer_master: pd.DataFrame, sort_column: str) -> pd.DataFrame:
+    watchlist = region_summary(farmer_master)
+    watchlist["rankable"] = watchlist["farmers"] >= MIN_FARMERS_TO_RANK
+    watchlist["enough"] = watchlist["rankable"].map({True: "Yes", False: "No"})
     ascending = sort_column in {"Delivery completion", "Linkage rate"}
-    return watchlist.rename(columns={
-        "region": "Region", "farmers": "Farmers (n)", "delivery_rate": "Delivery completion",
-        "pest_rate": "Pest or disease rate", "linkage_rate": "Linkage rate",
-        "follow_up_score": "Follow up score",
-    })[[
-        "Region", "Farmers (n)", "Delivery completion", "Pest or disease rate", "Linkage rate", "Follow up score",
-    ]].sort_values(sort_column, ascending=ascending, na_position="last").style.format({
+
+    renamed = watchlist.rename(columns={
+        "region": "Region", "farmers": "Farmers (n)", "enough": "Enough to rank",
+        "delivery_rate": "Delivery completion", "pest_rate": "Pest or disease rate",
+        "linkage_rate": "Linkage rate", "follow_up_score": "Follow up score",
+    })
+    # Thin regions produce extreme rates on one or two farmers, so they sort below the rankable ones
+    # rather than heading the table on noise.
+    ordered = renamed.sort_values(
+        ["rankable", sort_column], ascending=[False, ascending], na_position="last",
+    )
+    return ordered[[
+        "Region", "Farmers (n)", "Enough to rank", "Delivery completion", "Pest or disease rate",
+        "Linkage rate", "Follow up score",
+    ]].style.format({
         "Delivery completion": "{:.0%}", "Pest or disease rate": "{:.0%}",
         "Linkage rate": "{:.0%}", "Follow up score": "{:.2f}",
     })

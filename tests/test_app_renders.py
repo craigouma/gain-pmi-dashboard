@@ -100,8 +100,19 @@ def test_every_page_renders(app):
 
 def test_overview_reports_linkage_with_its_n(app):
     prose = " ".join(block.value for block in app.markdown)
-    assert "linkage rate of 96%" in prose
-    assert "n=50 farmers" in prose
+    assert "96%, n=50 farmer records" in prose
+    assert "9,640 kg" in prose
+
+
+def test_overview_findings_name_a_region_to_act_on(app):
+    prose = " ".join(block.value for block in app.markdown)
+    assert "is the region to look at first" in prose
+    assert "delivery completion of" in prose
+
+
+def test_overview_findings_state_the_analytical_limits(app):
+    prose = " ".join(block.value for block in app.markdown)
+    assert "no baseline and no control group" in prose
 
 
 def test_sidebar_exposes_every_report_level_filter(app):
