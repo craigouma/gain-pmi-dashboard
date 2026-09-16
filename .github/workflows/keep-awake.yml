@@ -11,13 +11,13 @@ jobs:
     steps:
       - name: Visit the dashboard
         env:
-          APP_URL: ${{ vars.STREAMLIT_APP_URL }}
+          APP_URL: https://gain-pmi-dashboard.streamlit.app/
         run: |
-          if [ -z "$APP_URL" ]; then
-            echo "STREAMLIT_APP_URL repository variable is not set"
-            exit 1
-          fi
-          status=$(curl --silent --show-error --location --max-time 60 --output /dev/null --write-out '%{http_code}' "$APP_URL")
+          # Streamlit Cloud bootstraps a session cookie over several redirects, so a cookie jar is
+          # required. Without one the request loops on the auth redirect even for a public app.
+          jar=$(mktemp)
+          status=$(curl --silent --show-error --location --cookie-jar "$jar" --cookie "$jar" \
+            --max-redirs 10 --max-time 90 --output /dev/null --write-out '%{http_code}' "$APP_URL")
           echo "$APP_URL returned HTTP $status"
           if [ "$status" != "200" ]; then
             exit 1

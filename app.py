@@ -715,8 +715,8 @@ def render_integrated(frames: dict, filters: dict) -> None:
         st.info("No visits with a linked seed variety in the current selection.")
     else:
         base = alt.Chart(by_variety_stage)
-        bars = base.mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=22).encode(
-            x=alt.X("variety:N", title="Seed variety", axis=alt.Axis(labelAngle=0)),
+        bars = base.mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=18).encode(
+            x=alt.X("variety:N", title="Seed variety", axis=alt.Axis(labelAngle=-45)),
             y=alt.Y("mean(plant_height_cm):Q", title="Mean plant height (cm)", scale=alt.Scale(zero=True)),
             tooltip=[tip("variety:N", "Seed variety"),
                      alt.Tooltip("mean(plant_height_cm):Q", title="Mean plant height (cm)", format=".1f"),
@@ -731,7 +731,7 @@ def render_integrated(frames: dict, filters: dict) -> None:
             text=alt.Text("count():Q", format="d"),
         )
         st.altair_chart(
-            style((bars + intervals + labels).properties(height=240).facet(
+            style((bars + intervals + labels).properties(width=150, height=240).facet(
                 column=alt.Column("stage:N", title="Growth stage", sort=GROWTH_STAGE_LABEL_ORDER),
             )),
             use_container_width=False,
@@ -870,7 +870,7 @@ def render_data_quality(frames: dict, meta: dict) -> None:
                 color=PALETTE["primary"], cornerRadiusEnd=4, size=26
             ).encode(
                 x=alt.X("unique_farmer_id:Q", title="Farmer records", scale=alt.Scale(zero=True)),
-                y=alt.Y("link_status:N", title="Link status", sort="-x"),
+                y=alt.Y("link_status:N", title="Link status", sort="-x", axis=alt.Axis(labelLimit=200)),
                 tooltip=[tip("link_status:N", "Link status"),
                          tip("unique_farmer_id:Q", "Farmer records", fmt=",.0f")],
             )),
