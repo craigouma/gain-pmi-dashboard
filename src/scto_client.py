@@ -14,6 +14,13 @@ class SurveyCTOError(Exception):
     pass
 
 
+def _error_detail(response: requests.Response) -> str:
+    try:
+        return response.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        return response.text[:200]
+
+
 def fetch_form(form_id: str, timeout: float = 30.0, retries: int = 3, backoff: float = 2.0) -> list[dict]:
     user = os.environ.get("SCTO_USER")
     password = os.environ.get("SCTO_PASS")
@@ -32,7 +39,8 @@ def fetch_form(form_id: str, timeout: float = 30.0, retries: int = 3, backoff: f
             continue
 
         if response.status_code != 200:
-            last_error = SurveyCTOError(f"{form_id}: HTTP {response.status_code}")
+            detail = _error_detail(response)
+            last_error = SurveyCTOError(f"{form_id}: HTTP {response.status_code}, {detail}")
             if response.status_code in (429, 500, 502, 503, 504):
                 time.sleep(backoff * (attempt + 1))
                 continue
