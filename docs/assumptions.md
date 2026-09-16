@@ -42,6 +42,14 @@ One row per farmer id, a full outer join of the distinct ids in each form, so fa
 
 days_between_submissions is the number of days between a farmer's distribution submission and their first crop health submission. It is blank for a farmer missing either side, not zero.
 
+## Ranking regions
+
+The sample holds 50 farmers spread across 21 regions, so a region carries between one and five farmers and a single farmer moves its rate by 20 to 100 percentage points. Ranking on that is noise, and an early version of the watchlist put a two farmer region at the top on a 100 percent pest rate.
+
+A region therefore needs at least five farmers before it is ranked. Regions below that are still shown, with their farmer count and a marker saying there is not enough to rank, and they sort below the rankable ones rather than heading the table. The written finding on the overview page applies the same rule, and falls back to country level, where each country holds 12 to 14 farmers, when no region qualifies.
+
+Five is a working floor for dummy data, not a statistical threshold. With real submission volumes it should be revisited, and a rate should carry a confidence interval rather than a minimum count.
+
 ## Refresh cadence in Apps Script
 
 SurveyCTO rate limits a full pull (date=0) to one request per server per 300 seconds, and the limit applies across forms, not per form, confirmed against SurveyCTO's own support documentation. Fetching both forms back to back in one run always collides with this limit, so apps_script/Code.gs refreshes one form per trigger run, alternating, and rebuilds farmer_master each time from the form it just fetched plus the other form's most recent cleaned data already sitting in its own sheet tab.
