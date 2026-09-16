@@ -41,3 +41,9 @@ Computed within each growth stage's own cohort in the cleaned crop health table,
 One row per farmer id, a full outer join of the distinct ids in each form, so farmers with no match on either side survive rather than being dropped. It carries the farmer's distribution answers as submitted, plus a summary of their crop health visits: visit count, first and last visit date, and the most recent visit's growth stage, height, and height z-score. Full visit by visit detail stays in the crop_health table for anything that needs every visit, such as the growth stage distribution on page 3.
 
 days_between_submissions is the number of days between a farmer's distribution submission and their first crop health submission. It is blank for a farmer missing either side, not zero.
+
+## Refresh cadence in Apps Script
+
+SurveyCTO rate limits a full pull (date=0) to one request per server per 300 seconds, and the limit applies across forms, not per form, confirmed against SurveyCTO's own support documentation. Fetching both forms back to back in one run always collides with this limit, so apps_script/Code.gs refreshes one form per trigger run, alternating, and rebuilds farmer_master each time from the form it just fetched plus the other form's most recent cleaned data already sitting in its own sheet tab.
+
+This means each individual form refreshes roughly every 30 minutes rather than every 15, and farmer_master can be one refresh cycle, up to about 15 minutes, behind on one side of the join. On the very first run after setup, the tab that has not had its turn yet is empty, so farmer_master briefly shows only distribution_only or only crop_health_only farmers until the second run completes. The meta tab records a separate last refreshed timestamp for each form so this lag is visible rather than hidden.
