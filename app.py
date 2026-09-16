@@ -56,6 +56,8 @@ LINK_STATUS_LABELS = {
 
 SEED_VARIETY_LABELS = {"a": "Variety a", "b": "Variety b", "c": "Variety c", "other": "Other"}
 
+SEED_VARIETY_SHORT = {"a": "A", "b": "B", "c": "C", "other": "Other"}
+
 GROWTH_STAGE_LABEL_ORDER = [GROWTH_STAGE_LABELS[stage] for stage in GROWTH_STAGE_ORDER]
 
 DATE_PRESETS = ["All time", "Last 7 days", "Last 30 days", "Last 90 days", "This month", "Custom range"]
@@ -709,24 +711,26 @@ def render_integrated(frames: dict, filters: dict) -> None:
     )
     by_variety_stage = joined.dropna(subset=["seed_variety"]).assign(
         variety=lambda df: labelled(df["seed_variety"], "seed_variety"),
+        variety_short=lambda df: df["seed_variety"].map(SEED_VARIETY_SHORT).fillna(df["seed_variety"]),
         stage=lambda df: labelled(df["growth_stage"], "growth_stage"),
     )
     if by_variety_stage.empty:
         st.info("No visits with a linked seed variety in the current selection.")
     else:
         base = alt.Chart(by_variety_stage)
-        bars = base.mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=18).encode(
-            x=alt.X("variety:N", title="Seed variety", axis=alt.Axis(labelAngle=-45)),
+        bars = base.mark_bar(color=PALETTE["primary"], cornerRadiusEnd=4, size=20).encode(
+            x=alt.X("variety_short:N", title="Seed variety",
+                    axis=alt.Axis(labelAngle=0, labelOverlap=False)),
             y=alt.Y("mean(plant_height_cm):Q", title="Mean plant height (cm)", scale=alt.Scale(zero=True)),
             tooltip=[tip("variety:N", "Seed variety"),
                      alt.Tooltip("mean(plant_height_cm):Q", title="Mean plant height (cm)", format=".1f"),
                      alt.Tooltip("count():Q", title="Visits (n)", format="d")],
         )
         intervals = base.mark_errorbar(extent="ci", color=PALETTE["ink"]).encode(
-            x=alt.X("variety:N"), y=alt.Y("plant_height_cm:Q", title="Mean plant height (cm)"),
+            x=alt.X("variety_short:N"), y=alt.Y("plant_height_cm:Q", title="Mean plant height (cm)"),
         )
         labels = base.mark_text(dy=-6, color=PALETTE["muted"], fontSize=11).encode(
-            x=alt.X("variety:N"),
+            x=alt.X("variety_short:N"),
             y=alt.Y("mean(plant_height_cm):Q"),
             text=alt.Text("count():Q", format="d"),
         )
