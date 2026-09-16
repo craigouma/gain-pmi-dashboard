@@ -5,6 +5,8 @@ var FORM_IDS = {
 };
 var RETRYABLE_CODES = [429, 500, 502, 503, 504];
 var EAT_OFFSET_HOURS = 3;
+var NEXT_FORM_PROPERTY = 'NEXT_FORM_TO_REFRESH';
+var DATE_COLUMNS = ['submission_date'];
 
 var CHANNEL_COLS = {
   distribution_channel_ngo: 'channel_ngo',
@@ -35,30 +37,42 @@ var FARMER_MASTER_COLUMNS = ['unique_farmer_id', 'link_status', 'country', 'regi
   .concat(['n_crop_health_visits', 'first_crop_health_date', 'last_crop_health_date', 'latest_growth_stage',
     'latest_plant_height_cm', 'latest_height_z_within_stage', 'has_pest_disease', 'days_between_submissions']);
 
+// SurveyCTO rate limits a full pull ("date=0") to one request per SERVER per 300 seconds, not per
+// form. Fetching both forms in the same run always collides with that limit, so each run refreshes
+// only one form and reads the other form's most recent cleaned data back from its own sheet tab.
 function refreshDashboardData() {
-  var distributionRaw, cropHealthRaw;
+  var props = PropertiesService.getScriptProperties();
+  var formKey = props.getProperty(NEXT_FORM_PROPERTY) || 'distribution';
+  var otherKey = formKey === 'distribution' ? 'crop_health' : 'distribution';
+
+  var raw;
   try {
-    distributionRaw = fetchForm('distribution');
-    cropHealthRaw = fetchForm('crop_health');
+    raw = fetchForm(formKey);
   } catch (err) {
-    Logger.log('Refresh aborted, fetch failed: ' + err.message);
+    Logger.log('Refresh aborted, fetch failed for ' + formKey + ': ' + err.message);
     return;
   }
 
-  var distribution, cropHealth, farmerMaster;
+  var cleaned, otherCleaned, distribution, cropHealth, farmerMaster;
   try {
-    distribution = cleanDistribution(distributionRaw);
-    cropHealth = cleanCropHealth(cropHealthRaw);
+    cleaned = formKey === 'distribution' ? cleanDistribution(raw) : cleanCropHealth(raw);
+    otherCleaned = readSheetAsObjects(otherKey, columnsFor(otherKey));
+    distribution = formKey === 'distribution' ? cleaned : otherCleaned;
+    cropHealth = formKey === 'crop_health' ? cleaned : otherCleaned;
     farmerMaster = buildFarmerMaster(distribution, cropHealth);
   } catch (err) {
-    Logger.log('Refresh aborted, transform failed: ' + err.message);
+    Logger.log('Refresh aborted, transform failed for ' + formKey + ': ' + err.message);
     return;
   }
 
-  writeSheet('distribution', distribution, DISTRIBUTION_COLUMNS);
-  writeSheet('crop_health', cropHealth, CROP_HEALTH_COLUMNS);
+  writeSheet(formKey, cleaned, columnsFor(formKey));
   writeSheet('farmer_master', farmerMaster, FARMER_MASTER_COLUMNS);
-  writeMeta(distribution.length, cropHealth.length, farmerMaster.length);
+  writeMeta(formKey, cleaned.length, farmerMaster.length);
+  props.setProperty(NEXT_FORM_PROPERTY, otherKey);
+}
+
+function columnsFor(formKey) {
+  return formKey === 'distribution' ? DISTRIBUTION_COLUMNS : CROP_HEALTH_COLUMNS;
 }
 
 function fetchForm(formKey) {
@@ -310,17 +324,48 @@ function writeSheet(sheetName, rows, columns) {
   }
 }
 
-function writeMeta(distributionRows, cropHealthRows, farmerMasterRows) {
+// Reads a tab this script previously wrote back into typed row objects, so the form that was not
+// refreshed this run can still take part in the farmer_master join using its last known good data.
+function readSheetAsObjects(sheetName, columns) {
+  var sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, columns.length).getValues();
+  return values.map(function (rowValues) {
+    var row = {};
+    columns.forEach(function (col, index) {
+      var value = rowValues[index];
+      row[col] = value === '' ? null : value;
+    });
+    DATE_COLUMNS.forEach(function (col) {
+      if (row[col] && !(row[col] instanceof Date)) row[col] = new Date(row[col]);
+    });
+    return row;
+  });
+}
+
+function writeMeta(refreshedFormKey, refreshedRows, farmerMasterRows) {
   var ss = SpreadsheetApp.getActive();
   var sheet = ss.getSheetByName('meta') || ss.insertSheet('meta');
+  var nowStr = Utilities.formatDate(new Date(), 'Africa/Nairobi', 'yyyy-MM-dd HH:mm:ss');
+
+  var meta = readMetaAsMap(sheet);
+  meta['last_refreshed_eat'] = nowStr;
+  meta[refreshedFormKey + '_last_refreshed_eat'] = nowStr;
+  meta[refreshedFormKey + '_rows'] = refreshedRows;
+  meta['farmer_master_rows'] = farmerMasterRows;
+  meta['source'] = 'SurveyCTO REST API, test_form_one_data_specialist_pmi and test_form_two_data_specialist_pmi';
+
   sheet.clearContents();
-  sheet.getRange(1, 1, 5, 2).setValues([
-    ['last_refreshed_eat', Utilities.formatDate(new Date(), 'Africa/Nairobi', 'yyyy-MM-dd HH:mm:ss')],
-    ['distribution_rows', distributionRows],
-    ['crop_health_rows', cropHealthRows],
-    ['farmer_master_rows', farmerMasterRows],
-    ['source', 'SurveyCTO REST API, test_form_one_data_specialist_pmi and test_form_two_data_specialist_pmi'],
-  ]);
+  var rows = Object.keys(meta).map(function (key) { return [key, meta[key]]; });
+  sheet.getRange(1, 1, rows.length, 2).setValues(rows);
+}
+
+function readMetaAsMap(sheet) {
+  if (sheet.getLastRow() < 1) return {};
+  var values = sheet.getRange(1, 1, sheet.getLastRow(), 2).getValues();
+  var map = {};
+  values.forEach(function (row) { if (row[0]) map[row[0]] = row[1]; });
+  return map;
 }
 
 function setupSpreadsheet() {
@@ -329,6 +374,8 @@ function setupSpreadsheet() {
   ['distribution', 'crop_health', 'farmer_master', 'meta'].forEach(function (name) {
     if (!ss.getSheetByName(name)) ss.insertSheet(name);
   });
+  var props = PropertiesService.getScriptProperties();
+  if (!props.getProperty(NEXT_FORM_PROPERTY)) props.setProperty(NEXT_FORM_PROPERTY, 'distribution');
 }
 
 function installRefreshTrigger() {
