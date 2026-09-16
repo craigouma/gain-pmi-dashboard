@@ -62,6 +62,7 @@ Shape: 101 rows, 20 columns
 ## Submission date range
 Distribution: 2026-09-13 13:31:19 to 2026-09-13 14:48:43
 Crop health: 2026-09-13 15:05:13 to 2026-09-13 16:57:34
+The two ranges do not overlap, the forms were submitted in separate batches.
 
 ## Join diagnostics, raw
 distribution_rows: 49

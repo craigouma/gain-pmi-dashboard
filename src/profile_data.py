@@ -157,6 +157,9 @@ def render_report(dist: pd.DataFrame, crop: pd.DataFrame, diagnostics: dict) -> 
     lines.append("## Submission date range")
     lines.append(f"Distribution: {dist_start} to {dist_end}")
     lines.append(f"Crop health: {crop_start} to {crop_end}")
+    overlaps = dist_start <= crop_end and crop_start <= dist_end
+    coverage = "overlap" if overlaps else "do not overlap, the forms were submitted in separate batches"
+    lines.append(f"The two ranges {coverage}.")
     lines.append("")
 
     lines.append("## Join diagnostics, raw")
