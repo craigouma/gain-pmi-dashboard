@@ -113,6 +113,31 @@ def test_sidebar_exposes_every_report_level_filter(app):
         assert expected in labels
 
 
+def test_date_range_is_the_first_sidebar_control(app):
+    assert app.sidebar.selectbox[0].label == "Submission date range"
+    assert "All time" in app.sidebar.selectbox[0].options
+
+
+def test_section_measure_selectors_exist(app):
+    keys = [widget.key for widget in app.sidebar.selectbox]
+    for expected in ("dist_metric", "dist_dim", "crop_metric", "crop_dim", "watch_sort"):
+        assert expected in keys
+
+
+def test_changing_the_measure_rerenders_without_exception(app):
+    app.sidebar.selectbox(key="crop_metric").select("Mean plant height (cm)").run()
+    assert not app.exception, [str(error) for error in app.exception]
+    headings = " ".join(block.value for block in app.markdown)
+    assert "Mean plant height (cm) by" in headings
+
+
+def test_changing_the_breakdown_rerenders_without_exception(app):
+    app.sidebar.selectbox(key="dist_dim").select("Seed variety").run()
+    assert not app.exception, [str(error) for error in app.exception]
+    headings = " ".join(block.value for block in app.markdown)
+    assert "by seed variety" in headings
+
+
 def test_missing_sheet_id_fails_explicitly(sheet_payloads, monkeypatch):
     monkeypatch.delenv("SHEET_ID", raising=False)
     with patch("requests.get", fake_get(sheet_payloads)):
