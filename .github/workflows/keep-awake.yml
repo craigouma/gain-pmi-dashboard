@@ -1,0 +1,24 @@
+name: Keep the dashboard awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Visit the dashboard
+        env:
+          APP_URL: ${{ vars.STREAMLIT_APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "STREAMLIT_APP_URL repository variable is not set"
+            exit 1
+          fi
+          status=$(curl --silent --show-error --location --max-time 60 --output /dev/null --write-out '%{http_code}' "$APP_URL")
+          echo "$APP_URL returned HTTP $status"
+          if [ "$status" != "200" ]; then
+            exit 1
+          fi
