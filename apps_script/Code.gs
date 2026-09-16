@@ -357,8 +357,12 @@ function writeMeta(refreshedFormKey, refreshedRows, duplicatesDropped, farmerMas
   meta['source'] = 'SurveyCTO REST API, test_form_one_data_specialist_pmi and test_form_two_data_specialist_pmi';
 
   sheet.clearContents();
-  var rows = Object.keys(meta).map(function (key) { return [key, meta[key]]; });
-  sheet.getRange(1, 1, rows.length, 2).setValues(rows);
+  var rows = Object.keys(meta).map(function (key) { return [key, String(meta[key])]; });
+  // The CSV export types a whole column from its first values. Left as datetimes, every numeric or
+  // text cell in this column exports blank, so the column is pinned to plain text before writing.
+  var range = sheet.getRange(1, 1, rows.length, 2);
+  range.setNumberFormat('@');
+  range.setValues(rows);
 }
 
 function readMetaAsMap(sheet) {
