@@ -117,7 +117,7 @@ def typed_tab(tab: str) -> pd.DataFrame:
 
 
 def load_meta() -> dict:
-    meta = fetch_tab("meta", has_header=False)
+    meta = fetch_tab("meta", has_header=False).dropna(subset=["value"])
     return dict(zip(meta["key"], meta["value"]))
 
 
