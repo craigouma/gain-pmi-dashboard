@@ -6,3 +6,4 @@ data/*.json
 data/*.csv
 .streamlit/secrets.toml
 .DS_Store
+.claude/
