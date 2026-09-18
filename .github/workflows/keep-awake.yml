@@ -2,23 +2,20 @@ name: Keep the dashboard awake
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 jobs:
   visit:
     runs-on: ubuntu-latest
     steps:
-      - name: Visit the dashboard
-        env:
-          APP_URL: https://gain-pmi-dashboard.streamlit.app/
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Playwright
         run: |
-          # Streamlit Cloud bootstraps a session cookie over several redirects, so a cookie jar is
-          # required. Without one the request loops on the auth redirect even for a public app.
-          jar=$(mktemp)
-          status=$(curl --silent --show-error --location --cookie-jar "$jar" --cookie "$jar" \
-            --max-redirs 10 --max-time 90 --output /dev/null --write-out '%{http_code}' "$APP_URL")
-          echo "$APP_URL returned HTTP $status"
-          if [ "$status" != "200" ]; then
-            exit 1
-          fi
+          pip install playwright
+          playwright install --with-deps chromium
+      - name: Visit the dashboard as a real browser and wake it if asleep
+        run: python scripts/keep_awake.py
